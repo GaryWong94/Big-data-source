@@ -1,0 +1,56 @@
+Spark介绍与架构：
+
+Why Spark 和与MapReduce的区别：
+
+    MapReduce
+    1. MapReduce的任务更适合一路任务，对于多路任务或需要多次迭代的任务来说，Spark更加合适。
+    2. 在上一个任务完成后，都先必须把数据保存在HDFS上才能进行下一次任务。这个操作需要的磁盘I/O非常耗时。
+    3. 要执行多个任务，需要对程序进行串联，导致每个任务自身都是高时延。而且必须上一个任务完成后才能开始下一个任务。
+
+    Spark的表现
+    1. RDD可以把数据cache到内存中，一次读取多次使用
+    2. Spark允许程序开发者使用有向无环图（DAG）开发复杂的多步数据管道。而且还支持跨有向无环图的内存数据共享，以便不同的作业可以共同处理同一个数据。
+
+
+Spark生态圈：
+   Spark生态圈以HDFS、S3为底层存储引擎，以Yarn、Mesos和Standlone作为资源调度引擎；
+
+   基于Spark的：
+   0. Spark 计算引擎 自身可以实现MapReduce应用；
+   1. Spark Streaming 流式计算  可以处理实时应用
+   2. MLib 机器学习库  可以实现机器学习算法
+   3. GraphX 图算法  可以实现图计算
+   4. Spark SQL 数据仓库  可以实现类SQL查询
+   5. SparkR 实现复杂数学计算
+
+      Spark Streaming: 将 data stream 变成 batches of data(Discretized Streams) 放入 Spark engine 中进行操作 产生新的DStream
+      文档： https://spark.apache.org/docs/latest/streaming-programming-guide.html#discretized-streams-dstreams
+
+(DAG:有向无环图，通过划分Stage，使不同的作业可以高并发进行)
+(Stage的划分依据 是与父RDD的依赖关系，上一个stage完成后才能进行下一个stage)
+(Lineage 血统：RDD1 => RDD2，因此RDD2具有这个lineage)
+(Shuffle Dependency 需要Shuffle /Narrow Dependency)
+
+
+
+RDD 各部分的解释：
+弹性：“弹性”是指在任何时候都能进行重算。
+这样当集群中的一台机器挂掉而导致存储在其上的RDD丢失后，Spark还可以重新计算出这部分的分区的数据。但用户感觉不到这部分的内容丢失过。
+这样RDD数据集就像块带有弹性的海绵一样，不管怎样挤压（分区遭到破坏）都是完整的。
+
+分布式：
+数据集：
+
+
+RDD可以cache到内存中，每次对RDD数据集的操作之后的结果，都可以存放到内存中，下一个操作可以直接从内存中输入，省去了MapReduce大量的磁盘IO操作。
+这对于迭代运算比较常见的机器学习算法, 交互式数据挖掘来说，效率提升比较大。
+
+
+
+Action操作和Transformation操作的区别
+
+1. 惰性求值：Action操作会触发实际的计算，而Transformation是没有触发实际计算的，是惰性求值的
+
+2. 返回类型：Transformation操作是一个RDD转化为一个新的RDD，即返回RDD，而Action操作返回其他数据类型。
+
+3. 输出结果：Action操作会有实际结果的输出，向驱动器程序返回结果或者把结果写入外部系统。Transformation并无实际输出。
