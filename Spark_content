@@ -1,5 +1,7 @@
 Spark介绍与架构：
 
+-------------------------------------------------------------------------------------------------------------------------
+
 Why Spark 和与MapReduce的区别：
 
     MapReduce
@@ -8,9 +10,12 @@ Why Spark 和与MapReduce的区别：
     3. 要执行多个任务，需要对程序进行串联，导致每个任务自身都是高时延。而且必须上一个任务完成后才能开始下一个任务。
 
     Spark的表现
-    1. RDD可以把数据cache到内存中，一次读取多次使用
+    1. RDD可以cache到内存中，每次对RDD数据集的操作之后的结果，都可以存放到内存中，下一个操作可以直接从内存中输入，省去了MapReduce大量的磁盘IO操作。
+       这对于迭代运算比较常见的机器学习算法, 交互式数据挖掘来说，效率提升比较大。
+
     2. Spark允许程序开发者使用有向无环图（DAG）开发复杂的多步数据管道。而且还支持跨有向无环图的内存数据共享，以便不同的作业可以共同处理同一个数据。
 
+-------------------------------------------------------------------------------------------------------------------------
 
 Spark生态圈：
    Spark生态圈以HDFS、S3为底层存储引擎，以Yarn、Mesos和Standlone作为资源调度引擎；
@@ -23,34 +28,265 @@ Spark生态圈：
    4. Spark SQL 数据仓库  可以实现类SQL查询
    5. SparkR 实现复杂数学计算
 
-      Spark Streaming: 将 data stream 变成 batches of data(Discretized Streams) 放入 Spark engine 中进行操作 产生新的DStream
+      Spark Streaming: 将 data stream 变成 batches of data(Discretized Streams) 放入 Spark engine 中进行操作(RDD转换) 产生新的DStream
       文档： https://spark.apache.org/docs/latest/streaming-programming-guide.html#discretized-streams-dstreams
+-------------------------------------------------------------------------------------------------------------------------
 
-(DAG:有向无环图，通过划分Stage，使不同的作业可以高并发进行)
-(Stage的划分依据 是与父RDD的依赖关系，上一个stage完成后才能进行下一个stage)
-(Lineage 血统：RDD1 => RDD2，因此RDD2具有这个lineage)
-(Shuffle Dependency 需要Shuffle /Narrow Dependency)
+RDD：只读的，可分区的分布式数据集，这个数据集的全部或部分可以缓存在内存中，在多次计算间重用。
 
+RDD 特点：
+1. 是一个分区的只读记录的集合； 
+2. 一个具有容错机制的特殊集； 
+4. 可以分布在集群的节点上，以函数式操作集合的方式，进行各种并行操作
 
-
-RDD 各部分的解释：
-弹性：“弹性”是指在任何时候都能进行重算。
-这样当集群中的一台机器挂掉而导致存储在其上的RDD丢失后，Spark还可以重新计算出这部分的分区的数据。但用户感觉不到这部分的内容丢失过。
-这样RDD数据集就像块带有弹性的海绵一样，不管怎样挤压（分区遭到破坏）都是完整的。
-
-分布式：
-数据集：
-
-
-RDD可以cache到内存中，每次对RDD数据集的操作之后的结果，都可以存放到内存中，下一个操作可以直接从内存中输入，省去了MapReduce大量的磁盘IO操作。
-这对于迭代运算比较常见的机器学习算法, 交互式数据挖掘来说，效率提升比较大。
-
+RDD  弹性理解 ：“弹性”是指在任何时候都能进行重算。
+    1.自动进行内存和磁盘切换 
+    2.基于lineage的高效容错 
+    3.task如果失败会特定次数的重试 
+    4.stage如果失败会自动进行特定次数的重试，而且只会只计算失败的partition
+    5.checkpoint和persist 【内存或磁盘中对数据进行复用】
+    6.数据调度弹性：DAG TASK 和资源管理无关 
+    7.数据分片的高度弹性repartion
+    8 RDD数据集就像块带有弹性的海绵一样，不管怎样挤压（分区遭到破坏）都是完整的。
 
 
-Action操作和Transformation操作的区别
+- RDD的重要内部属性（数据结构）：
 
-1. 惰性求值：Action操作会触发实际的计算，而Transformation是没有触发实际计算的，是惰性求值的
+•一组partitions（分片，可扩展性）
+
+•计算每个分片的函数（transformation，action）
+
+•RDD间的依赖关系（自动容错）
+
+•选择项：一个K-V RDD的partitioner（自定义分区函数，一般是使用hash函数）
+
+•选择项：存储每个partition的优先的（preferred）位置（本地优化分配）
+
+
+实际上还具有的性质：
+
+1. immutable，意味着不能修改，只能进行转换产生另一个RDD
+2. 每个数据分区的地址列表（如HDFS上的数据块的地址）
+
+-------------------------------------------------------------------------------------------------------------------------
+
+RDD存储结构
+
+RDD实现的数据结构核心是一个五元组：
+
+属性                                说明
+
+分区列表-partitions                 每个分区为RDD的一部分数据
+
+依赖列表-dependencies               table存储其父RDD即依赖RDD
+
+计算函数-compute                     利用父分区计算RDD各分区的值
+
+分区器-partitioner                   指明RDD的分区方式(hash/range)
+
+分区位置列表-preferredLocations      指明分区优先存放的结点位置
+
+-------------------------------------------------------------------------------------------------------------------------
+partition： 
+默认情况
+
+1、默认情况下,当Spark从HDFS读一个文件的时候，会为一个输入的片段创建一个分区，也就是一个HDFS split对应一个RDD partition, 
+   大小是64MB或者128MB，这个过程是自动完成的，不需要人工干预，但是这个分区之间的split是基于行的分割而不是按照块分割的。
+
+2、使用默认读取文件命令时，分区数目可能会少，一般情况下是HDFS分区数目，如果文件一行长度很长（大于block大小），分区数会变少。
+
+每个executor分配的Task的数量和executor分配的CPU数量一致，而Task数量和分区数目一致。所以要平衡分区数目和申请的CPU资源。
+
+一般情况下，分区文件小会导致分区数目增加，可以分配到更多的节点上进行计算，这样会提升速度；分区过大则分区数目减少，如果分区数目远少于分配的CPU数目，那么很多CPU就会空闲，速度会很慢。
+
+Spark对每个RDD分区只能运行一个并行任务，最多同时运行任务数就是集群的CPU核心总数，总体讲建议一个CPU最多可以分配2-3个任务。所以总的分区数目理想数字也应该是分配的CPU的2-3倍之间。
+
+分区的最大大小由executor的可用内存决定，如果分区过大，多个大的分区被分配到同一个executor中，超出了shuffle内存，则会出现内存溢出。
+
+分区任务分配
+
+我们基本上都了解，计算和数据的本地化是分布式计算的一个重要思想，当数据和运算分离的时候就需要从其他节点拉数据，这个是要消耗网络IO的。
+
+在进行任务分配的时候，要以网络传输消耗最小化为原则，Spark从最近的节点将数据读到RDD中。Spark首先会评估分区情况，当任务分配完毕后，会有若干个executor，而分区在若干个worker上，需要综合评估网络传输的代价，将不同的分区分配到不同的executor上。
+•当计算完本地性之后，再分发任务。
+
+•Driver刚启动时候，executor还没有初始化完毕，一部分任务的本地化被设置为NO_PREF，ShuffleRDD的本地性始终为NO_PREF，在任务分配时候优先分配到非本地节点。
+
+
+作者：王燚光
+链接：https://www.zhihu.com/question/33270495/answer/93424104
+来源：知乎
+著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+
+输入可能以多个文件的形式存储在HDFS上，每个File都包含了很多块，称为Block。当Spark读取这些文件作为输入时，会根据具体数据格式对应的InputFormat进行解析，一般是将若干个Block合并成一个输入分片，称为InputSplit，注意InputSplit不能跨越文件。随后将为这些输入分片生成具体的Task。InputSplit与Task是一一对应的关系。随后这些具体的Task每个都会被分配到集群上的某个节点的某个Executor去执行。每个节点可以起一个或多个Executor。每个Executor由若干core组成，每个Executor的每个core一次只能执行一个Task。每个Task执行的结果就是生成了目标RDD的一个partiton。注意:  这里的core是虚拟的core而不是机器的物理CPU核，可以理解为就是Executor的一个工作线程。
+而 Task被执行的并发度 = Executor数目 * 每个Executor核数。至于partition的数目：对于数据读入阶段，例如sc.textFile，输入文件被划分为多少InputSplit就会需要多少初始Task。在Map阶段partition数目保持不变。在Reduce阶段，RDD的聚合会触发shuffle操作，聚合后的RDD的partition数目跟具体操作有关，例如repartition操作会聚合成指定分区数，还有一些算子是可配置的。
+
+
+
+
+
+Partitioner决定RDD的分区方式。 
+RDD的分区方式主要包含两种（HashPartitioner和RangePartitioner），这两种分区类型都是针对Key-Value类型的数据。如是非Key-Value类型，则分区为None。 
+Hash是以key作为分区条件的散列分布，分区数据不连续，极端情况也可能散列到少数几个分区上，导致数据不均等；Range按Key的排序平衡分布，分区内数据连续，大小也相对均等。
+
+NarrowDependency与ShuffleDependency
+如果父RDD的每个分区最多只能被子RDD的一个分区使用，我们称之为（narrow dependency）窄依赖； 
+若一个父RDD的每个分区可以被子RDD的多个分区使用，我们称之为（wide dependency）宽依赖，在源代码中方法名为ShuffleDependency，顾名思义这之中还需要Shuffle操作。 
+
+
+窄依赖每个child RDD 的partition的生成操作都是可以并行的，而宽依赖则需要所有的parent partition shuffle结果得到后再进行。
+
+NarrowDependency也还有两个子类，一个是 OneToOneDependency，一个是 RangeDependency
+
+OneToOneDependency，可以看到getParents实现很简单，就是传进一个partitionId: Int，再把partitionId放在List里面传出去，即去parent RDD 中取与该RDD 相同 partitionID的数据
+
+RangeDependency，用于union。与上面不同的是，这里我们要算出该位置，设某个parent RDD 从 inStart 开始的partition，逐个生成了 child RDD 从outStart 开始的partition，则计算方式为： partitionId - outStart + inStart
+
+-------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+- RDD的创建方式: 
+1. 从Hadoop文件系统（或者与Hadoop兼容的其他持久化存储系统，Hive，HBase，Cassandra）输入创建 
+2. 从父RDD转换得到新的RDD
+
+-------------------------------------------------------------------------------------------------------------------------
+
+- RDD为何高效
+1. RDD不可变，而且lazy的。通过两种操作和记录compute chain进行转换。
+2. 只支持粗粒度转换：
+        [粗粒度： 每次操作 都作用于所有集合] 因此，对于RDD的写是粗粒度的（如map/filter/join），这种方式通过记录RDD之间的转换从而刻画RDD的继承关系，
+        而不是真实的数据，最终构成一个DAG（有向无环图），而如果发生RDD丢失，RDD会有充足的信息来得知怎么从其他RDDs重新计算得到。
+        读 操作 可以是粗粒度的也可以是细粒度的： 可以读其中的一条记录。
+3. 通过数据的本地性来提高性能
+
+-------------------------------------------------------------------------------------------------------------------------
+
+- RDD的容错机制详解：
+1. 使用Lineage
+    记录下compute chain(lineage)，计算丢失部分就可以 
+        比如：RDD1->RDD2, RDD1 partition2丢失，在RDD1->RDD3过程中，RDD1要重新从RDD0计算partition2，再计算RDD3
+        
+2. 使用checkpoint
+    每次对RDD操作都会产生新的RDD，如果compute chain比较长，计算比较笨重，就把数据放在硬盘中
+    1. Checkpoint会把当前RDD保存到一个目录中。 
+    2. Checkpoint的时候，会把所有依赖的父级rdd信息清除掉。 
+    3. Checkpoint不会马上执行，要触发action操作的时候才会执行。 
+    4. 因为 Checkpoint会清除父级RDD的信息，所以在Checkpoint应该先做persist（持久化）操作，否则就要重新计算一遍。 
+    5. 一般来说，Lineage链较长、宽依赖的RDD需要采用检查点机制。 
+    6. Checkpoint的好处显而易见，比如做1000次迭代，在第999次时做了Checkpoint，如果第1000次的时候，只要重新计算第1000即可，不用从头到尾再计算一次。 
+    7. 与spark提供的另一种缓存机制cache相比， cache缓存数据由executor管理，当executor消失了，被cache的数据将被清除，RDD重新计算，而checkpoint将数据保存到磁盘或HDFS，job可以从checkpoint点继续计算。
+-------------------------------------------------------------------------------------------------------------------------
+
+
+- Action 和 Transformation的区别
+Transformation操作： 是指由一个RDD生成新RDD的过程，其代表了是计算的中间过程，其并不会触发真实的计算。
+Action操作：         不同于Transformation操作，Action代表一次计算的结束，不再产生新的RDD，将结果返回到Driver程序。
+                    所以Transformation只是建立计算关系，而Action才是实际的执行者。每个Action都会调用SparkContext的runJob方法向集群正式提交请求，所以每个Action对应一个Job。
+
+1. 惰性求值：Action操作会触发实际的计算，而Transformation是没有触发实际计算的，是惰性求值的，从一个RDD转换生成另一个RDD的转换操作不是马上执行的，
+            需要等到有Actions操作时，才开始触发运算 
 
 2. 返回类型：Transformation操作是一个RDD转化为一个新的RDD，即返回RDD，而Action操作返回其他数据类型。
 
-3. 输出结果：Action操作会有实际结果的输出，向驱动器程序返回结果或者把结果写入外部系统。Transformation并无实际输出。
+3. 输出结果：Action操作会有实际结果的输出，触发Spark提交作业（Job），并将其他数据类型输出到Spark系统。(向驱动器程序返回结果或者把结果写入外部系统)。
+            Transformation并无实际输出。
+            
+-------------------------------------------------------------------------------------------------------------------------
+
+依赖：宽依赖(ShuffleDependency) 窄依赖(NarrowDependency)
+窄依赖指的是每一个父RDD的Partition最多被子RDD的一个Partition使用 
+
+哪些操作属于窄依赖呢？
+
+•map
+
+•flatMap
+
+•filter
+
+•union
+
+•部分join
+
+•sample
+
+
+
+
+
+宽依赖指的是多个子RDD的Partition会依赖同一个父RDD的Partition 
+哪些操作属于宽依赖呢？
+
+•部分join
+
+•groupByKey
+
+•reduceByKey
+
+•groupWith
+
+•cartesian
+
+
+
+
+Stage/Task
+Stage
+Stage可以简单理解为是由一组RDD组成的可进行优化的执行计划。如果RDD的衍生关系都是窄依赖，则可放在同一个Stage中运行，若RDD的依赖关系为宽依赖，则要划分到不同的Stage。这样Spark在执行作业时，会按照Stage的划分, 生成一个完整的最优的执行计划。下面引用一张比较流行的图片辅助大家理解Stage，如图RDD-A到RDD-B和RDD-F到RDD-G均属于宽依赖，所以与前面的父RDD划分到了不同的Stage中。 
+
+
+DAG:  DAG(Directed Acyclic Graph)叫做有向无环图，原始的RDD通过一系列的转换就就形成了DAG，根据RDD之间的依赖关系的不同将DAG划分成不同的Stage，对于窄依赖，partition的转换处理在Stage中完成计算。
+对于宽依赖，由于有Shuffle的存在，只能在parent RDD处理完成后，才能开始接下来的计算，因此宽依赖是划分Stage的依据。 
+
+
+
+(DAG:有向无环图，通过划分Stage，使不同的作业可以高并发进行)
+(Stage的划分依据 是与父RDD的依赖关系，上一个stage完成后才能进行下一个stage)
+(Shuffle Dependency 需要Shuffle /Narrow Dependency)
+Sparkcontext
+SparkContext为Spark job的入口，由Spark driver创建在client端，包括集群连接，RddID，创建抽样，累加器，广播变量等信息。
+
+
+
+
+1，Application
+application（应用）其实就是用spark-submit提交的程序。比方说spark examples中的计算pi的SparkPi。一个application通常包含三部分：从数据源（比方说HDFS）取数据形成RDD，通过RDD的transformation和action进行计算，将结果输出到console或者外部存储（比方说collect收集输出到console）。
+
+2，Driver
+ Spark中的driver感觉其实和yarn中Application Master的功能相类似。主要完成任务的调度以及和executor和cluster manager进行协调。有client和cluster联众模式。client模式driver在任务提交的机器上运行，而cluster模式会随机选择机器中的一台机器启动driver。从spark官网截图的一张图可以大致了解driver的功能。
+
+ 
+
+3，Job
+ Spark中的Job和MR中Job不一样不一样。MR中Job主要是Map或者Reduce Job。而Spark的Job其实很好区别，一个action算子就算一个Job，比方说count，first等。
+
+4, Task
+Task是Spark中最新的执行单元。RDD一般是带有partitions的，每个partition的在一个executor上的执行可以任务是一个Task。 
+
+5, Stage
+Stage概念是spark中独有的。一般而言一个Job会切换成一定数量的stage。各个stage之间按照顺序执行。至于stage是怎么切分的，首选得知道spark论文中提到的narrow dependency(窄依赖)和wide dependency（ 宽依赖）的概念。其实很好区分，看一下父RDD中的数据是否进入不同的子RDD，如果只进入到一个子RDD则是窄依赖，否则就是宽依赖。宽依赖和窄依赖的边界就是stage的划分点
+
+
+
+
+ClusterManager： 
+在Standlone模式中，ClusterManager为Master。在Yarn模式中就是ResourceManage资源管理器。
+Worker： 
+从节点，在Standlone模式中就是一个Worker节点，在Yarn模式中就是NodeManager，负责具体的任务，启动Executor或者Driver。
+Driver：首先Driver是一个Spark节点中的一个驱动进程，它是负责执行我们开发代码中的main函数的一个进程，它负责执行开发人员编写的代码，根据代码来创建SparkContext、创建RDD，以及进行RDD的转化和算子操作。如果我们用的是spark shell，那么我们在启动命令的时候，驱动器就会自动为我们创建一个SparkContext对象，如果我们的spark shell终止了，那么Spark应用也就结束了。 
+Driver在spark作业中的作用 
+把用户编写的程序转换成任务：Driver程序负责把用户的程序转换成多个物理执行单元，这些单元也称之为任务（Task）,Task是spark中执行的最小单元。spark程序流程其实就是：创建SparkContext、创建RDD、转换RDD、执行转换或者算子操作、结果入库，然后spark会把上述操作流程转换成一个有向无环图（DAG），也就是逻辑执行计划（Spark会对逻辑执行计划进行优化，将多个Task合并成一系列的执行步骤（Stage），所以Stage是由多个Task组成的。这些Stage会被发送到集群上执行）。当Driver运行的时候，它会把这个逻辑图转换成物理执行计划。
+跟踪Executor的运行状况：有了物理执行计划以后，那么Driver就会协各个节点上的Executor资源情况，当Executor启动以后，Driver会接受Executor的反向注册，那么Driver就可以监控Executor的运行情况了。
+Executor： 
+执行器，为应用提供运行在Worker节点上的进程，然后启动线程池。每个应用程序都有独立的一组Executor。
+SparkContext： 
+Spark应用程序的上下文，控制着整个程序的声明周期。
+RDD： 
+Spark基本的计算单元，一种抽象的数据结构。弹性分布式数据集，是一种内存抽象，可以理解为一个大数组，数组的元素是RDD的分区Partition，分布在集群上；在物理数据存储上，RDD的每一个Partition对应的就是一个数据块Block，Block可以存储在内存中，当内存不够时可以存储在磁盘上
+DAG Scheduler： 
+根据Job狗将Stage，封装成TaskSet提交给TaskScheduler。
+TaskScheduler： 
+它是一个进程
+将Task分发到Executor中，并接受Executor的注册，监控Executor情况。
