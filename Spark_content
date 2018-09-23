@@ -125,6 +125,16 @@ Spark对每个RDD分区只能运行一个并行任务，最多同时运行任务
 
 
 
+
+第一，HDFS的block直接生成或者合并成InputSplit，这个和默认的配置、块的行大小、自定义设置等因素有关，这些InputSplit就是任务对应的基本数据单元，这个InputSplit对任务来说就是一个Partition。
+
+第二，每个分区对应了一个任务，Driver通过对于这些分区的评估，将task分配到不同的Executor上，一个Executor可以对应多个任务，这个和分配的CPU数量有关。
+
+
+
+
+
+
 Partitioner决定RDD的分区方式。 
 RDD的分区方式主要包含两种（HashPartitioner和RangePartitioner），这两种分区类型都是针对Key-Value类型的数据。如是非Key-Value类型，则分区为None。 
 Hash是以key作为分区条件的散列分布，分区数据不连续，极端情况也可能散列到少数几个分区上，导致数据不均等；Range按Key的排序平衡分布，分区内数据连续，大小也相对均等。
