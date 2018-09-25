@@ -1,0 +1,53 @@
+Difference:
+  1.0 and 2.0 
+    一、从Hadoop整体框架来说
+            Hadoop1.0即第一代Hadoop，由分布式存储系统HDFS和分布式计算框架MapReduce组成，其中HDFS由一个NameNode和多个DateNode组成，MapReduce由一个JobTracker和多个TaskTracker组成。
+
+            Hadoop2.0即第二代Hadoop为克服Hadoop1.0中的不足：针对Hadoop1.0单NameNode制约HDFS的扩展性问题，提出HDFS Federation，它让多个NameNode分管不同的目录进而实现访问隔离和横向扩展，同时彻底解决了NameNode单点故障问题；
+            针对Hadoop1.0中的MapReduce在扩展性和多框架支持等方面的不足，它将JobTracker中的资源管理和作业控制分开，分别由ResourceManager（负责所有应用程序的资源分配）和ApplicationMaster（负责管理一个应用程序）实现，即引入了资源管理框架Yarn。
+            同时Yarn作为Hadoop2.0中的资源管理系统，它是一个通用的资源管理模块，可为各类应用程序进行资源管理和调度，不仅限于MapReduce一种框架，也可以为其他框架使用，如Tez、Spark、Storm等
+
+
+
+    二、从MapReduce计算框架来讲
+            MapReduce1.0计算框架主要由三部分组成：编程模型、数据处理引擎和运行时环境。它的基本编程模型是将问题抽象成Map和Reduce两个阶段，其中Map阶段将输入的数据解析成key/value，迭代调用map()函数处理后，再以key/value的形式输出到本地目录，
+            Reduce阶段将key相同的value进行规约处理，并将最终结果写到HDFS上；它的数据处理引擎由MapTask和ReduceTask组成，分别负责Map阶段逻辑和Reduce阶段的逻辑处理；它的运行时环境由一个JobTracker和若干个TaskTracker两类服务组成，其中JobTracker负责资源管理和所有作业的控制，TaskTracker负责接收来自JobTracker的命令并执行它。
+
+            MapReducer2.0具有与MRv1相同的编程模型和数据处理引擎，唯一不同的是运行时环境。MRv2是在MRv1基础上经加工之后，运行于资源管理框架Yarn之上的计算框架MapReduce。
+            它的运行时环境不再由JobTracker和TaskTracker等服务组成，而是变为通用资源管理系统Yarn和作业控制进程ApplicationMaster，其中Yarn负责资源管理的调度而ApplicationMaster负责作业的管理。
+
+  3.0:
+  - 支持的最低Java版本: 从Java 7变成Java 8
+  - 容错
+      Hadoop 2.x - 可以通过复制（浪费空间）来处理容错。
+      Hadoop 3.x - 可以通过Erasure编码处理容错。
+  - 数据平衡
+      Hadoop 2.x - 对于数据，平衡使用HDFS平衡器。
+      Hadoop 3.x - 对于数据，平衡使用Intra-data节点平衡器，该平衡器通过HDFS磁盘平衡器CLI调用。
+
+  - 存储Scheme
+      Hadoop 2.x - 使用3X副本Scheme
+      Hadoop 3.x - 支持HDFS中的擦除编码。
+
+  - 存储开销
+      Hadoop 2.x - HDFS在存储空间中有200％的开销。
+      Hadoop 3.x - 存储开销仅为50％。
+    存储开销示例
+      Hadoop 2.x - 如果有6个块，那么由于副本方案（Scheme），将有18个块占用空间。
+      Hadoop 3.x - 如果有6个块，那么将有9个块空间，6块block，3块用于奇偶校验。
+
+  - YARN时间线服务
+      Hadoop 2.x - 使用具有可伸缩性问题的旧时间轴服务。
+      Hadoop 3.x - 改进时间线服务v2并提高时间线服务的可扩展性和可靠性。
+
+  - HDFS联盟
+      Hadoop 2.x - 在Hadoop 1.0中，只有一个NameNode来管理所有Namespace，但在Hadoop 2.0中，多个NameNode用于多个Namespace。
+      Hadoop 3.x - Hadoop 3.x还有多个名称空间用于多个名称空间。
+
+------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+------------------------------------------------------------------------------------------------------------
