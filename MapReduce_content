@@ -1,0 +1,23 @@
+MP job是工作单元：包括输入数据、MapReduce程序、配置信息。
+切分： Hadoop将MR的输入切分成等长小数据块： input split ，每个split创建一个map任务
+
+因此，并行处理时，负载平衡很重要。
+
+分片大小：
+  太大：容易负载不平衡，一个节点失败后，另一个节点执行，
+  太小：管理分片总时间和构建map任务的时间 太大
+  默认：HDFS一个块 128MB
+    为什么: 如果分片跨越两个block，剩下的部分数据需要通过网络传输到map任务的节点，效率低下
+
+数据本地化优化：mapper
+  在存有HDFS文件的节点上运行map任务
+1. mapper中间东西放在哪里
+  放在本地磁盘：作业完成可以删除，如果放在hdfs，要备份什么的，没意义。
+  如果map完之后，发送给reduce失败，会将map在另一个节点中重新运行
+  可以只有mapper，没有reducer，由mapper的输出结果直接输入HDFS中
+  
+2. reducer不具备本地化优化：来自于所有mapper的输出 进行shuffle(单个reducer只需要sort)后通过reduce function归并。
+  reducer的输出写入HDFS
+  reducer的数目是指定的：如果有多个reducer，mapper会对各自结果进行分区，按照key的hash方法(partitioner)发给reducer
+  
+3. Combiner，进行优化
