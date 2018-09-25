@@ -1,0 +1,18 @@
+- 适用性
+  MongoDB做高性能数据库，Redis做缓存，HBase做大数据分析。
+  
+- MongoDB
+  MongoDB还无法取代关系型数据库。传统关系型数据库面对数据规模、数据模型复杂时的不足，导致了NoSQL的快速发展，后者易扩展，性能高，支持灵活的数据模型。
+  MongoDB是高性能、无模式的文档型数据库，支持二级索引，非常适合文档化格式的存储及查询。MongoDB的官方定位是通用数据库，确实和MySQL有些像，现在也很流行，但它还是有事务、join等短板，在事务、复杂查询应用下无法取代关系型数据库。
+
+- Redis
+  Redis是内存型Key/Value系统，读写性能非常好，支持操作原子性，很适合用来做高速缓存。
+  
+- HBase
+  HBase存储容量大，一个表可以容纳上亿行、上百万列，可应对超大数据量要求扩展简单的需求。
+  Hadoop的无缝集成，让HBase的数据可靠性和海量数据分析性能（MapReduce）值得期待。所以说，关系型数据库和NoSQL各有优劣，两者结合，可以覆盖更多的业务场景。
+
+  更多关于适用性： http://techlog.cn/article/list/10182729
+
+性能分析数据比较：
+https://db-engines.com/en/system/Cassandra%3BHBase%3BMongoDB%3BRedis
