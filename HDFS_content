@@ -1,4 +1,5 @@
 HDFS特点： 以流式访问模式来存储超大文件
+  缺陷：
   1. 因为文件很大，读取整个文件的时间延迟比读取第一条记录的时间延迟重要
   2. 高吞吐，高时延
   3. 不适合大量的小文件：namenode在内存中存文件系统的元数据，因此文件系统可以存的文件受限于namenode的内存总量
@@ -31,9 +32,16 @@ HDFS概念：
             失效后的操作：
                 备用namenode迅速接管工作：最新的状态在内存中(包括编辑日志和最新的信息)
   
+写入文件：
+  (1) client 对 分布式文件系统调用create来新建文件， 文件系统对namenode创建调用，在namespace中新建一个文件(没有数据块)。
+  (2) 此时检查文件不存在且client有写的功能，创建record or 抛出异常。
+  (3) 客户端开始写入数据，把数据变成stream：data queue，DataStreamer要求namenode为其分配block(位于datanode中)，将数据包流式传输到datanode，再到其他datanode(复本)
+  (4) namenode注意到副本数量不够，开始复制复本直到满足
   
+  
+保持均衡： 保持平衡：尽量不在同一机架放所有复本，考虑 可靠性/写入带宽/读取带宽。
 
-
+两个HDFS集群间传输： distcp
 
 HDFS在hadoop3.0中：
   Erasure coding：
