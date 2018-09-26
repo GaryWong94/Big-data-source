@@ -1,4 +1,4 @@
-MP job是工作单元：包括输入数据、MapReduce程序、配置信息。
+MapReduce job是工作单元：包括输入数据、MapReduce程序、配置信息。
 切分： Hadoop将MR的输入切分成等长小数据块： input split ，每个split创建一个map任务
 
 因此，并行处理时，负载平衡很重要。
