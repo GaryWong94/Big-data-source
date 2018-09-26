@@ -48,3 +48,6 @@ HDFS在hadoop3.0中：
   采用纠删码来恢复，只需要占用1.5倍的内存值
 
   参考：https://www.edureka.co/blog/hadoop-3/#ErasureEncoding
+
+直观图片理解HDFS文件读写过程：
+https://chu888chu888.gitbooks.io/hadoopstudy/content/Content/3/chapter0302.html
