@@ -118,14 +118,33 @@ Spark首先会评估分区情况，当任务分配完毕后，会有若干个exe
 当Spark读取这些文件作为输入时，会根据具体数据格式对应的InputFormat进行解析，一般是将若干个Block合并成一个输入分片，称为InputSplit，注意InputSplit不能跨越文件。
 随后将为这些输入分片生成具体的Task。InputSplit与Task是一一对应的关系。随后这些具体的Task每个都会被分配到集群上的某个节点的某个Executor去执行。
 
-每个节点可以起一个或多个Executor。每个Executor由若干core组成，每个Executor的每个core一次只能执行一个Task。每个Task执行的结果就是生成了目标RDD的一个partiton。
+每个节点可以起一个或多个Executor。每个Executor由若干core组成，每个Executor的每个core一次只能执行一个Task。每个Task执行的结果就是生成了目标RDD的一个partiton。(由一个partition生成另一个partition)
 注意:  这里的core是虚拟的core而不是机器的物理CPU核，可以理解为就是Executor的一个工作线程。
-而 Task被执行的并发度 = Executor数目 * 每个Executor核数。至于partition的数目：对于数据读入阶段，例如sc.textFile，输入文件被划分为多少InputSplit就会需要多少初始Task。
+而 Task被执行的并发度 = Executor数目 * 每个Executor核数。
+至于partition的数目：对于数据读入阶段，例如sc.textFile，输入文件被划分为多少InputSplit就会需要多少初始Task。
 在Map阶段partition数目保持不变。在Reduce阶段，RDD的聚合会触发shuffle操作，聚合后的RDD的partition数目跟具体操作有关，例如repartition操作会聚合成指定分区数，还有一些算子是可配置的。
 
 
+1. 什么是job
+Job简单讲就是提交给spark的任务。当对RDD使用action时执行
+2. 什么是stage
+Stage是每一个job处理过程要分为的几个阶段。一般根据dependency划分
+3什么是task
+Task是每一个job处理过程要分几为几次任务。Task是任务运行的最小单位。最终是要以task为单位运行在executor中。
+3. Job和stage和task之间有什么关系
+Job----> 一个或多个stage---> 一个或多个task
+5.一个stage的task的数量是有谁来决定的？
+RDD的partition决定。一个 rdd 有多少个 partition，就会有多少个 task，因为每一个 task 只是处理一个 partition 上的数据
+6.一个job任务的task数量是由谁来决定的？
+一个job任务可以有一个或多个stage，一个stage又可以有一个或多个task。所以一个job的task数量是  （stage数量 * task数量）的总和。 
+7.每一个stage中的task最大的并行度？
+并行度：是指指令并行执行的最大条数。在指令流水中，同时执行多条指令称为指令并行。
+理论上：每一个stage下有多少的分区，就有多少的task，task的数量就是我们任务的最大的并行度。（一般情况下，我们一个task运行的时候，使用一个cores）
+实际上：最大的并行度，取决于我们的application任务运行时使用的executor拥有的cores的数量。 
+8.如果我们的task数量超过这个cores的总数怎么办？
+先执行cores个数量的task，然后等待cpu资源空闲后，继续执行剩下的task。 
 
-- Partitioner
+
 
 Partitioner决定RDD的分区方式。 
 RDD的分区方式主要包含两种（HashPartitioner和RangePartitioner），这两种分区类型都是针对Key-Value类型的数据。如是非Key-Value类型，则分区为None。 
