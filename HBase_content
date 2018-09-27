@@ -6,6 +6,7 @@ Hbase是分布式、面向列的开源数据库（其实准确的说是面向列
 
 HDFS为Hbase提供可靠的底层数据存储服务，MapReduce为Hbase提供高性能的计算能力，Zookeeper为Hbase提供稳定服务和Failover机制。
 因此我们说Hbase是一个通过大量廉价的机器解决海量数据的高速存储和读取的分布式数据库解决方案。
+适合：巨量、查询简单、没有复杂关联 (海量订单流水、交易记录、数据库历史数据)
 
 NoSQL产生原因：(1) 对于特定查询，不是所有值都必须，尤其OLAP中，因此可以减少IO
                  (2) 列的数据是类似的，便于压缩
@@ -54,6 +55,63 @@ NoSQL产生原因：(1) 对于特定查询，不是所有值都必须，尤其OL
       
   HBase架构如下：
     ![image](https://github.com/GaryWong94/Big-data-source/blob/master/pic/1506395765370_9254_1506395767893.png)
+
+架构各部分解析：
+
+- Client
+    Client包含了访问Hbase的接口，另外Client还维护了对应的cache来加速Hbase的访问，比如cache的.META.元数据的信息。
+
+- Zookeeper
+    Hbase通过Zookeeper来做master的高可用、RegionServer的监控、元数据的入口以及集群配置的维护等工作。具体工作如下：
+    通过Zoopkeeper来保证集群中只有1个master在运行，如果master异常，会通过竞争机制产生新的master提供服务
+    通过Zoopkeeper来监控RegionServer的状态，当RegionSevrer有异常的时候，通过回调的形式通知Master RegionServer上下限的信息
+    通过Zoopkeeper存储元数据的统一入口地址
+
+- Hmaster   有点像namenode
+    master节点的主要职责如下：
+    为RegionServer分配Region
+    维护整个集群的负载均衡
+    维护集群的元数据信息
+    发现失效的Region，并将失效的Region分配到正常的RegionServer上
+    当RegionSever失效的时候，协调对应Hlog的拆分
+
+- HregionServer     有点像worker node
+    HregionServer直接对接用户的读写请求，是真正的“干活”的节点。它的功能概括如下：
+      管理master为其分配的Region
+      处理来自客户端的读写请求
+      负责和底层HDFS的交互，存储数据到HDFS
+      负责Region变大以后的拆分
+      负责Storefile的合并工作
+
+---------------------------------------------------------------------------------------------------------------
+
+Region解析：
+  Region寻址：需要读写一行数据，找哪个region
+    第1步：Client请求ZK获取.META.所在的RegionServer的地址。
+    第2步：Client请求.META.所在的RegionServer获取访问数据所在的RegionServer地址，client会将.META.的相关信息cache下来，以便下一次快速访问。
+    第3步：Client请求数据所在的RegionServer，获取所需要的数据。
+    
+  Client中缓存的东西不更新，如果数据更新了，Client访问不到会报错，然后往上一级走，访问.META.在的RegionServer，还没有，再往上走，访问ZK
+
+---------------------------------------------------------------------------------------------------------------
+
+写入数据
+
+第1步：Client获取数据写入的Region所在的RegionServer
+第2步：请求写Hlog
+第3步：请求写MemStore
+只有当写Hlog和写MemStore都成功了才算请求写入完成。MemStore后续会逐渐刷到HDFS中。
+备注：Hlog存储在HDFS，当RegionServer出现异常，需要使用Hlog来恢复数据。
+
+---------------------------------------------------------------------------------------------------------------
+
+MemStore刷盘
+
+
+
+
+---------------------------------------------------------------------------------------------------------------
+
 
 
 
