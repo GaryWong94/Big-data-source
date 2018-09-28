@@ -1,4 +1,25 @@
 MapReduce job是工作单元：包括输入数据、MapReduce程序、配置信息。
+
+MapReduce全过程：
+1. 作业启动：开发者通过控制台启动作业；
+2. 作业初始化：这里主要是切分数据、创建作业和提交作业，与第三步紧密相联；
+3. 作业/任务调度：对于1.0版的Hadoop来说就是JobTracker来负责任务调度，对于2.0版的Hadoop来说就是Yarn中的Resource Manager负责整个系统的资源管理与分配，Yarn可以参考IBM的一篇博客Hadoop新MapReduce框架Yarn详解；
+4. Map任务；
+5. Shuffle；
+6. Reduce任务；
+7. 作业完成：通知开发者任务完成。
+
+最重要的三步：
+  Map:数据输入,做初步的处理,输出形式的中间结果；
+  Shuffle:按照partition、key对中间结果进行排序合并,输出给reduce线程；
+  Reduce:对相同key的输入进行最终的处理,并将结果写入到文件中。
+  
+  map: (K1, V1) → list(K2, V2) 
+  combine: (K2, list(V2)) → list(K2, V2) 
+  reduce: (K2, list(V2)) → list(K3, V3)
+
+
+
 切分： Hadoop将MR的输入切分成等长小数据块： input split ，每个split创建一个map任务
 
 因此，并行处理时，负载平衡很重要。
@@ -6,18 +27,91 @@ MapReduce job是工作单元：包括输入数据、MapReduce程序、配置信�
 分片大小：
   太大：容易负载不平衡，一个节点失败后，另一个节点执行，
   太小：管理分片总时间和构建map任务的时间 太大
-  默认：HDFS一个块 128MB
+  默认：HDFS一个块 128MB 比较大
     为什么: 如果分片跨越两个block，剩下的部分数据需要通过网络传输到map任务的节点，效率低下
 
-数据本地化优化：mapper
-  在存有HDFS文件的节点上运行map任务
-1. mapper中间东西放在哪里
-  放在本地磁盘：作业完成可以删除，如果放在hdfs，要备份什么的，没意义。
-  如果map完之后，发送给reduce失败，会将map在另一个节点中重新运行
-  可以只有mapper，没有reducer，由mapper的输出结果直接输入HDFS中
-  
+
+
+
+
 2. reducer不具备本地化优化：来自于所有mapper的输出 进行shuffle(单个reducer只需要sort)后通过reduce function归并。
   reducer的输出写入HDFS
   reducer的数目是指定的：如果有多个reducer，mapper会对各自结果进行分区，按照key的hash方法(partitioner)发给reducer
   
-3. Combiner，进行优化
+3. Combiner，进行优化，减少传输到Reduce中的数据量。它主要是为了削减Mapper的输出从而减少网络带宽和Reducer之上的负载。
+  一个combiner只是处理一个结点中的的输出。
+　　
+  
+
+Mapreduce的shuffle：
+  在Hadoop这样的集群环境中，大部分map task与reduce task的执行是在不同的节点上。当然很多情况下Reduce执行时需要跨节点去拉取其它节点上的map task结果。
+  如果集群正在运行的job有很多，那么task的正常执行对集群内部的网络资源消耗会很严重。这种网络消耗是正常的，我们不能限制，能做的就是最大化地减少不必要的消耗。
+  还有在节点内，相比于内存，磁盘IO对job完成时间的影响也是可观的。从最基本的要求来说，我们对Shuffle过程的期望可以有： 
+    完整地从map task端拉取数据到reduce 端。
+    在跨节点拉取数据时，尽可能地减少对带宽的不必要消耗。
+    减少磁盘IO对task执行的影响。
+    
+    
+map + shuffle + reduce
+
+Map： 
+    1. mapper中间东西放在哪里
+      放在本地磁盘：作业完成可以删除，如果放在hdfs，要备份什么的，没意义。
+      如果map完之后，发送给reduce失败，会将map在另一个节点中重新运行
+      可以只有mapper，没有reducer，由mapper的输出结果直接输入HDFS中
+      
+    2. 如何选择node运行Map任务
+    在进行海量数据处理时，外存文件数据I/O访问会成为一个制约系统性能的瓶颈，因此，Hadoop的Map过程实现的一个重要原则就是：计算靠近数据，这里主要指两个方面：
+      代码靠近数据：
+      原则：本地化数据处理（locality），即一个计算节点尽可能处理本地磁盘上所存储的数据；尽量选择数据所在DataNode启动Map任务；这样可以减少数据通信，提高计算效率；
+      数据靠近代码：
+      当本地没有数据处理时，尽可能从同一机架或最近其他节点传输数据进行处理（host选择算法）。
+    
+    3. 过程：
+      (1) 输入: map task只读取split分片，对于一个split只会对应一个文件的一个block或多个block，不允许一个split对应多个文件的多个block；
+      
+      (2) Partition
+        作用：将map的结果发送到相应的reduce端，总的partition的数目等于reducer的数量。
+        实现功能：
+        map输出的是key/value对，决定于当前的mapper的part交给哪个reduce的方法是：mapreduce提供的Partitioner接口，对key进行hash后，再以reducetask数量取模，然后到指定的job上（HashPartitioner，可以通过job.setPartitionerClass(MyPartition.class)自定义）。
+        然后将数据写入到内存缓冲区，缓冲区的作用是批量收集map结果，减少磁盘IO的影响。key/value对以及Partition的结果都会被写入缓冲区。在写入之前，key与value值都会被序列化成字节数组。
+        要求：负载均衡，效率；
+        
+Mapper端的Shuffle开始：      
+
+      (3) spill（溢写）：sort & combiner
+        作用：把内存缓冲区中的数据写入到本地磁盘，在写入本地磁盘时先按照partition、再按照key进行排序（quick sort）；
+        注意：
+        这个spill是由另外单独的线程来完成，不影响往缓冲区写map结果的线程；
+        内存缓冲区默认大小限制为100MB，它有个溢写比例（spill.percent），默认为0.8，当缓冲区的数据达到阈值时，溢写线程就会启动。
+        先锁定这80MB的内存，执行溢写过程，maptask的输出结果还可以往剩下的20MB内存中写，互不影响。然后再重新利用这块缓冲区，因此Map的内存缓冲区又叫做环形缓冲区；
+        在将数据写入磁盘之前，先要对要写入磁盘的数据进行一次排序操作，先按<key,value,partition>中的partition分区号排序，然后再按key排序，这个就是sort操作，最后溢出的小文件是分区的，且同一个分区内是保证key有序的；
+                
+        Combiner：
+          每个combiner会聚合在一个mapper上的结果，然后拿去shuffle
+          In-mapper combiner：把mapper运行时，因为有setup()，存在内存，mapper产生完之后调用cleanup()，产生聚合后的结果，写入local disk并进入shuffle阶段。
+          Combiner：在mapper产生完之后，把数据从local disk取出来，聚合在一起
+          区别：
+            In-mapper快很多，因为直接存在内存的，但是不能太大，怕内存爆炸。
+          要求：
+            reduce的输入输出类型都一样，因为combine本质上就是reduce操作；
+            计算逻辑上，combine操作后不会影响计算结果，像求和就不会影响；
+            
+        (4) merge
+          当是普通combiner时，每次溢写会产生spill file，但是最后mapper只会产生一个中间文件，因此在mapper所有工作完成后，会把spill file进行归并排序
+Map结束
+Reduce开始
+        (5) copy过程
+          作用：拉取数据；
+          过程：Reduce进程启动一些数据copy线程(Fetcher)，通过HTTP方式请求ApplicationMaster获取map task的输出。
+        (6) merge过程
+          Copy过来的数据会先放入内存缓冲区中，因为 Shuffle 阶段 Reducer 不运行，所以应该把绝大部分的内存都给 Shuffle 用。
+          这里需要强调的是，merge的：1)内存到内存 2)内存到磁盘 3)磁盘到磁盘(归并)。
+          当内存中的数据量到达一定阈值，就启动内存到磁盘的 merge：因为reduce端在从多个map端copy数据的时候，并没有进行sort，只是把它们加载到内存，当达到阈值写入磁盘时，需要进行merge.
+          实际上就是溢写的过程，然后在磁盘中生成了众多的溢写文件，这种merge方式一直在运行，直到没有map端的数据时才结束，然后才会启动磁盘到磁盘的merge方式生成reducer的输入文件。
+        (7)reducer的输入文件
+          merge的最后会生成一个文件，大多数情况下存在于磁盘中，但是需要将其放入内存中。当reducer 输入文件已定，整个 Shuffle 阶段才算结束。
+Shuffle结束       
+        (8)reducer开始工作，将生成的结果放入HDFS.
+Reducer结束
+
