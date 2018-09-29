@@ -405,20 +405,18 @@ https://blog.csdn.net/yhb315279058/article/details/51035631
 
 
 - groupByKey:
-groupByKey can cause out of disk problems as data is sent over the network and collected on the reduce workers.
-
+    value根据key单纯的聚合成一个sequence，然后进行传输。1.额外的网络传输  2.当datanode节点进行shuffle时，容易造成OOM(把需要的partitions都取过来了)。
 - reduceByKey:
-Data is combined at each partition , only one output for one key at each partition to send over network. reduceByKey required combining all your values into another value with the exact same type.
-
+    在数据传输前，数据在本地会先调用reduce函数进行聚合，再进行传输
 - aggregateByKey:
-same as reduceByKey, which takes an initial value.
+    调用combinerByKey,和reduceByKey一样, 需要初始值.
 
 - combineByKey:
-Initial value : unlike aggregateByKey, need not to pass constant always, we can pass a function a function which will return a new value.
-merging function
-combine function
+    更灵活，可以返回其他输出类型
+    merging function
+    combine function
 
-reduceByKey,aggregateByKey,combineByKey preferred over groupByKey
+reduceByKey,aggregateByKey,combineByKey 都比 groupByKey 好
 
 参考：https://stackoverflow.com/questions/43364432/spark-difference-between-reducebykey-vs-groupbykey-vs-aggregatebykey-vs-combineb
 
