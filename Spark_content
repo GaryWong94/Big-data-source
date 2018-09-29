@@ -108,7 +108,7 @@ Spark对每个RDD分区只能运行一个并行任务，最多同时运行任务
 
 分区任务分配
 
-我们基本上都了解，计算和数据的本地化是分布式计算的一个重要思想，当数据和运算分离的时候就需要从其他节点拉数据，这个是要消耗网络IO的。
+计算和数据的本地化是分布式计算的一个重要思想，当数据和运算分离的时候就需要从其他节点拉数据，这个是要消耗网络IO的。
 
 在进行任务分配的时候，要以网络传输消耗最小化为原则，Spark从最近的节点将数据读到RDD中。
 Spark首先会评估分区情况，当任务分配完毕后，会有若干个executor，而分区在若干个worker上，需要综合评估网络传输的代价，将不同的分区分配到不同的executor上。
@@ -152,9 +152,6 @@ Hash是以key作为分区条件的散列分布，分区数据不连续，极端�
 Range按Key的排序平衡分布，分区内数据连续，大小也相对均等。
 
 -------------------------------------------------------------------------------------------------------------------------
-
-
-
 
 - RDD的创建方式: 
 1. 从Hadoop文件系统（或者与Hadoop兼容的其他持久化存储系统，Hive，HBase，Cassandra）输入创建 分发list
@@ -221,8 +218,7 @@ RangeDependency，用于union。与上面不同的是，这里我们要算出该
 
 
 依赖：宽依赖(ShuffleDependency) 窄依赖(NarrowDependency)
-窄依赖指的是每一个父RDD的Partition最多被子RDD的一个Partition使用 
-
+窄依赖指的是每一个父RDD的Partition最多被子RDD的一个Partition使用，只有map任务，不需要发生Shuffle过程
 哪些操作属于窄依赖呢？
 
 •map
@@ -234,7 +230,7 @@ RangeDependency，用于union。与上面不同的是，这里我们要算出该
 •union
 
 
-宽依赖指的是多个子RDD的Partition会依赖同一个父RDD的Partition 
+宽依赖指的是多个子RDD的Partition会依赖同一个父RDD的Partition，需要计算好所有父RDD对应分区的数据，然后在节点之间进行Shuffle。
 哪些操作属于宽依赖呢？
 
 •groupByKey
@@ -271,17 +267,18 @@ DAG:  DAG(Directed Acyclic Graph)叫做有向无环图，原始的RDD通过一�
 Client：客户端进程，负责提交作业到Master。
 
 Application：Spark Application的概念和Hadoop MapReduce中的类似，指的是用户编写的Spark应用程序，包含了一个Driver 功能的代码和分布在集群中多个节点上运行的Executor代码；
-            一个application通常包含三部分：从数据源（比方说HDFS）取数据形成RDD，通过RDD的transformation和action进行计算，将结果输出到console或者外部存储（比方说collect收集输出到console）。
+            一个application通常包含三部分：从数据源取数据形成RDD，通过RDD的transformation和action进行计算，将结果输出到console或者外部存储（比方说collect收集输出到console）。
 
 Cluster Manager：指的是在集群上获取资源的外部服务，目前有：
-Standalone：Spark原生的资源管理，由Master负责资源的分配；
-Hadoop Yarn：由YARN中的ResourceManager负责资源的分配；
+        Standalone：Spark原生的资源管理，由Master负责资源的分配；
+        Hadoop Yarn：由YARN中的ResourceManager负责资源的分配；
 
 Master：Standalone模式中主控节点，负责接收Client提交的作业，管理Worker，并命令Worker启动Driver和Executor。
 
 Worker：集群中任何可以运行Application代码的节点，类似于YARN中的NodeManager节点。在Standalone模式中指的就是通过Slave文件配置的Worker节点，在Spark on Yarn模式中指的就是NodeManager节点，负责管理本节点的资源，定期向 Master汇报心跳，接收Master的命令，启动Driver和Executor；
 
 Driver： Spark中的driver感觉其实和yarn中Application Master的功能相类似。主要完成任务的调度以及和executor和cluster manager进行协调。
+        带有Spark context
         一个Spark作业运行时包括一个Driver进程，也是作业的主进程，负责作业的解析、生成Stage并调度Task到Executor上。
         包括DAGScheduler，TaskScheduler。
 
@@ -315,36 +312,89 @@ RDD：Spark的基本计算单元，一组RDD可形成执行的有向无环图RDD
     MetricsSystem：监控运行时性能指标信息。
 
     SparkConf：负责存储配置信息。)
+    
+    架构图如下：
+![image](https://github.com/GaryWong94/Big-data-source/blob/master/pic/20171114093031720.jpg)
+
+
 
 架构：
 
 Spark架构采用了分布式计算中的Master-Slave模型。Master是对应集群中的含有Master进程的节点，Slave是集群中含有Worker进程的节点。
     Master作为整个集群的控制器，负责整个集群的正常运行；Worker相当于是计算节点，接收主节点命令与进行状态汇报；
     Executor负责任务的执行；Client作为用户的客户端负责提交应用，Driver负责控制一个应用的执行。
-
+    
+    
 Spark集群部署后，需要在主节点和从节点分别启动Master进程和Worker进程，对整个集群进行控制。在一个Spark应用的执行过程中，Driver和Worker是两个重要角色。
     Driver 程序是应用逻辑执行的起点，负责作业的调度，即Task任务的分发，而多个Worker用来管理计算节点和创建Executor并行处理任务。
     在执行阶段，Driver会将Task和Task所依赖的file和jar序列化后传递给对应的Worker机器，同时Executor对相应数据分区的任务进行处理。
 
-Spark的整体流程为：Client 提交应用，Master找到一个Worker启动Driver，Driver向Master或者资源管理器申请资源，
-    之后将应用转化为RDD Graph，再由DAGScheduler将RDD Graph转化为Stage的有向无环图提交给TaskScheduler，由TaskScheduler提交任务给Executor执行。
-    在任务执行的过程中，其他组件协同工作，确保整个应用顺利执行。
 
-1.在集群启动的时候，各个slave节点（也可以说是worker）会向集群的Master注册，告诉Master我随时可以干活了，随叫随到
-2.Master会根据一种心跳机制来实时监察集群中各个worker的状态，是否能正常工作
-3.Driver Application提交作业的时候也会先向Master注册信息
-4.作业注册完毕之后，Master会向worker发射Executor命令
-5.worker产生若干个Executor准备执行
-6.各个worker中的Executor会向Driver Application注册Executor信息，以便Driver Application能够将作业分发到具体的Executor
-7.Executor会定期向Driver Application报告当前的状态更新信息
-8.Driver Application发射任务到Executor执行
+Spark的整体流程为
+
+    standalone模式：
+        1.spark集群启动后，Worker向Master注册信息
+        2.spark-submit命令提交程序后，driver和application也会向Master注册信息
+        3.创建SparkContext对象：主要的对象包含DAGScheduler和TaskScheduler
+        4.Driver把Application信息注册给Master后，Master会根据Application信息去Worker节点启动Executor
+        5.Executor内部会创建运行task的线程池，然后把启动的Executor反向注册给Dirver
+        6.DAGScheduler：负责把Spark作业转换成Stage的DAG，根据宽窄依赖切分Stage，然后把Stage封装成TaskSet的形式发送个TaskScheduler；
+                  同时DAGScheduler还会处理由于Shuffle数据丢失导致的失败；
+        7.TaskScheduler：维护所有TaskSet，分发Task给各个节点的Executor（根据数据本地化策略分发Task），监控task的运行状态，负责重试失败的task；
+        8.所有task运行完成后，SparkContext向Master注销，释放资源；
+        
+        
+    Spark-on-yarn模式：
+        yarn的组件：
+        ResourceManager负责分配资源，ApplicationMaster负责应用管理，NodeManager负责计算管理
+        ResourceManager：负责将集群的资源分配给各个应用使用，而资源分配和调度的基本单位是Container，其中封装了集群资源（CPU、内存、磁盘等），每个任务只能在Container中运行，并且只使用Container中的资源；
+        NodeManager：是一个个计算节点，负责启动Application所需的Container，并监控资源的使用情况汇报给ResourceManager
+        ApplicationMaster：主要负责向ResourceManager申请Application的资源，获取Container并跟踪这些Container的运行状态和执行进度，
+            执行完后通知ResourceManager注销ApplicationMaster，ApplicationMaster也是运行在Container中；(DAGSchedule和TaskSchedule)
+            
+    (1)client:
+        1.client向ResouceManager申请启动ApplicationMaster，同时在SparkContext初始化中创建DAGScheduler和TaskScheduler
+        2.ResouceManager收到请求后，在一台NodeManager中启动第一个Container运行ApplicationMaster
+        3.Dirver中的SparkContext初始化完成后与ApplicationMaster建立通讯，ApplicationMaster向ResourceManager申请Application的资源
+        4.一旦ApplicationMaster申请到资源，便与之对应的NodeManager通讯，启动Executor，并把Executor信息反向注册给Dirver
+        5.Dirver分发task，并监控Executor的运行状态，负责重试失败的task
+        6.运行完成后，Client的SparkContext向ResourceManager申请注销并关闭自己
+
+
+
+    (2)cluster:
+        yarn-cluster模式中，当用户向yarn提交应用程序后，yarn将分为两阶段运行该应用程序：
+        第一个阶段是把Spark的Dirver作为一个ApplicationMaster在yarn中启动；
+        第二个阶段是ApplicationMaster向ResourceManager申请资源，并启动Executor来运行task，同时监控task整个运行流程并重试失败的task；
+
+
+
+
+
+
+运行时的措施：
+
+    1.在集群启动的时候，各个slave节点（也可以说是worker）会向集群的Master注册，告诉Master我随时可以干活了，随叫随到
+    2.Master会根据一种心跳机制来实时监察集群中各个worker的状态，是否能正常工作
+    3.Driver Application提交作业的时候也会先向Master注册信息
+    4.作业注册完毕之后，Master会向worker发射Executor命令
+    5.worker产生若干个Executor准备执行
+    6.各个worker中的Executor会向Driver Application注册Executor信息，以便Driver Application能够将作业分发到具体的Executor
+    7.Executor会定期向Driver Application报告当前的状态更新信息
+    8.Driver Application发射任务到Executor执行
 
 参考：http://www.raincent.com/content-85-10510-1.html
 -------------------------------------------------------------------------------------------------------------------------
 
-Spark调优： 看书
-和
-https://www.zhihu.com/question/48505037
+Spark调优： 
+理解Shuffle对性能的影响，并尽可能减少Shuffle次数（对于Spark是Stage个数）。
+理解任务并行度对性能的影响，Task并行执行符合木桶效应，利用好Spark的WebUI学会分析Task慢在哪，并设置合理的任务并发数。
+对于SparkSQL注意spark.sql.shuffle.partitions参数的配置避免严重的任务倾斜，即便Task并行度设置的是合理的，也会被倾斜的任务拖慢。
+避免严重的数据膨胀（类似笛卡尔积操作），防止出现OOM
+利用好cache，将需要反复用到的RDD或者DataFrame进行cache，加速计算。
+硬件方面：Spark进行Shuffle是要写磁盘的，给服务器配个SSD专门存Shuffle数据平均至少能带来20%的性能提升。
+经常跑大任务，建议采用万兆网络环境，避免网络瓶颈。
+
 
 算子方面：
 reduceByKey和groupByKey的区别： 
