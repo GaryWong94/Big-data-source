@@ -259,6 +259,19 @@ Stage可以简单理解为是由一组RDD组成的可进行优化的执行计划
 DAG:  DAG(Directed Acyclic Graph)叫做有向无环图，原始的RDD通过一系列的转换就就形成了DAG，根据RDD之间的依赖关系的不同将DAG划分成不同的Stage，对于窄依赖，partition的转换处理在Stage中完成计算。
 对于宽依赖，由于有Shuffle的存在，只能在parent RDD处理完成后，才能开始接下来的计算，因此宽依赖是划分Stage的依据。 
 
+
+
+
+-------------------------------------------------------------------------------------------------------------------------
+Shuffle操作：
+    窄依赖是子 RDD的各个分片(partition)不依赖于其他分片,能够独立计算得到结果,宽依赖指子 RDD 的各个分片会依赖于父RDD 的多个分片,所以会造成父 RDD 的各个分片在集群中重新分片, 看如下两个示例:
+
+　　Map 操作将 RDD 里的各个元素进行映射, RDD 的各个数据元素之间不存在依赖,可以在集群的各个内存中独立计算,也就是并行化。
+   但是groupby 之后的 Map 操作,为了计算相同 key 下的元素个数,需要把相同 key 的元素聚集到同一个 partition 下,所以造成了数据在内存中的重新分布, 即shuffle操作. shuffle 操作是 spark 中最耗时的操作,应尽量避免不必要的 shuffle. 
+　　宽依赖主要有两个过程: shuffle write 和 shuffle fetch. 类似 Hadoop 的 Map 和 Reduce 阶段.shuffle write 将 ShuffleMapTask 任务产生的中间结果缓存到内存中, shuffle fetch 通过网络获得 ShuffleMapTask 缓存的中间结果进行 ShuffleReduceTask 计算,这个过程容易造成OutOfMemory. 
+　　shuffle过程内存分配使用 ShuffleMemoryManager 类管理,会针对每个 Task 分配内存,Task 任务完成后通过 Executor 释放空间.这里可以把 Task 理解成不同 key 的数据对应一个 Task. 早期的内存分配机制使用公平分配,即不同 Task 分配的内存是一样的,但是这样容易造成内存需求过多的 Task 的 OutOfMemory, 从而造成多余的 磁盘 IO 过程,影响整体的效率.
+    1.5版以后 Task 共用一个内存池,内存池的大小默认为 JVM 最大运行时内存容量的16%,分配机制如下:假如有 N 个 Task,ShuffleMemoryManager 保证每个 Task 溢出之前至少可以申请到1/2N 内存,且至多申请到1/N,N 为当前活动的 shuffle Task 数,因为N 是一直变化的,所以 manager 会一直追踪 Task 数的变化,重新计算队列中的1/N 和1/2N.但是这样仍然容易造成内存需要多的 Task 任务溢出,所以最近有很多相关的研究是针对 shuffle 过程内存优化的. 
+
 -------------------------------------------------------------------------------------------------------------------------
 
 - 全部具体的部件和工作的整体流程
@@ -347,12 +360,13 @@ Spark的整体流程为
     Spark-on-yarn模式：
         yarn的组件：
         ResourceManager负责分配资源，ApplicationMaster负责应用管理，NodeManager负责计算管理
-        ResourceManager：负责将集群的资源分配给各个应用使用，而资源分配和调度的基本单位是Container，其中封装了集群资源（CPU、内存、磁盘等），每个任务只能在Container中运行，并且只使用Container中的资源；
-        NodeManager：是一个个计算节点，负责启动Application所需的Container，并监控资源的使用情况汇报给ResourceManager
-        ApplicationMaster：主要负责向ResourceManager申请Application的资源，获取Container并跟踪这些Container的运行状态和执行进度，
+        
+        1. ResourceManager：负责将集群的资源分配给各个应用使用，而资源分配和调度的基本单位是Container，其中封装了集群资源（CPU、内存、磁盘等），每个任务只能在Container中运行，并且只使用Container中的资源；
+        2. NodeManager：是一个个计算节点，负责启动Application所需的Container，并监控资源的使用情况汇报给ResourceManager
+        3. ApplicationMaster：主要负责向ResourceManager申请Application的资源，获取Container并跟踪这些Container的运行状态和执行进度，
             执行完后通知ResourceManager注销ApplicationMaster，ApplicationMaster也是运行在Container中；(DAGSchedule和TaskSchedule)
             
-    (1)client:
+    (1)client:(driver、sparkcontext、DAGSchedule都在client中，driver和application分开)
         1.client向ResouceManager申请启动ApplicationMaster，同时在SparkContext初始化中创建DAGScheduler和TaskScheduler
         2.ResouceManager收到请求后，在一台NodeManager中启动第一个Container运行ApplicationMaster
         3.Dirver中的SparkContext初始化完成后与ApplicationMaster建立通讯，ApplicationMaster向ResourceManager申请Application的资源
@@ -362,12 +376,10 @@ Spark的整体流程为
 
 
 
-    (2)cluster:
+    (2)cluster:(driver在application master中，driver和application在一起)
         yarn-cluster模式中，当用户向yarn提交应用程序后，yarn将分为两阶段运行该应用程序：
-        第一个阶段是把Spark的Dirver作为一个ApplicationMaster在yarn中启动；
+        第一个阶段是申请container放application master，把Spark的Dirver作为一个ApplicationMaster在container中启动；
         第二个阶段是ApplicationMaster向ResourceManager申请资源，并启动Executor来运行task，同时监控task整个运行流程并重试失败的task；
-
-
 
 
 
